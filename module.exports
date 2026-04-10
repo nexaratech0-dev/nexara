@@ -1,0 +1,584 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_URL="https://github.com/nexaratech0-dev/nexara.git"
+BRANCH_BASE="feature/initial-scaffold"
+WORKDIR="${PWD}"
+CLONE_DIR="nexara"
+
+# If inside a git repo, use current dir if remote matches; otherwise clone
+if [ -d ".git" ]; then
+  echo "Detected .git in current directory. Using current directory as repo."
+  GIT_URL="$(git config --get remote.origin.url || true)"
+  if [ -n "$GIT_URL" ] && [[ "$GIT_URL" != "$REPO_URL" ]]; then
+    echo "Warning: current repo remote.origin.url is '$GIT_URL' (not $REPO_URL)."
+    read -p "Continue using current directory? (y/N) " yn
+    case "$yn" in
+      [Yy]*) ;;
+      *) echo "Abort."; exit 1;;
+    esac
+  fi
+  REPO_DIR="${WORKDIR}"
+else
+  echo "Cloning repository $REPO_URL into ./${CLONE_DIR}..."
+  git clone "$REPO_URL" "$CLONE_DIR"
+  REPO_DIR="${WORKDIR}/${CLONE_DIR}"
+fi
+
+cd "$REPO_DIR"
+git fetch origin --prune
+
+# Determine branch name: if exists, append timestamp
+BRANCH="$BRANCH_BASE"
+if git rev-parse --verify --quiet "$BRANCH" >/dev/null || git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+  TS=$(date +%s)
+  BRANCH="${BRANCH_BASE}-${TS}"
+  echo "Branch feature/initial-scaffold already exists; using branch ${BRANCH}"
+fi
+
+# Create and checkout branch from origin/main (or main)
+if git show-ref --verify --quiet refs/heads/main || git ls-remote --exit-code --heads origin main >/dev/null 2>&1; then
+  git checkout -b "$BRANCH" origin/main 2>/dev/null || git checkout -b "$BRANCH" main 2>/dev/null || git checkout -b "$BRANCH"
+else
+  git checkout -b "$BRANCH"
+fi
+
+echo "Writing scaffold files..."
+
+# Create directories
+mkdir -p web/app/api/mock-stream
+mkdir -p web/components
+mkdir -p web/styles
+mkdir -p web/.storybook
+mkdir -p web/stories
+mkdir -p .github/workflows
+
+# web/package.json
+cat > web/package.json <<'EOF'
+{
+  "name": "nexara-web",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint --ext .ts,.tsx .",
+    "storybook": "storybook dev -p 6006",
+    "build-storybook": "storybook build",
+    "test": "jest --passWithNoTests"
+  },
+  "dependencies": {
+    "next": "14.0.0",
+    "react": "18.2.0",
+    "react-dom": "18.2.0"
+  },
+  "devDependencies": {
+    "@storybook/addon-essentials": "7.0.0",
+    "@storybook/react": "7.0.0",
+    "@testing-library/jest-dom": "^6.0.0",
+    "@testing-library/react": "^14.0.0",
+    "@types/jest": "^29.5.0",
+    "@types/node": "20.5.1",
+    "@types/react": "18.2.21",
+    "@types/react-dom": "18.2.7",
+    "autoprefixer": "^10.4.14",
+    "eslint": "^8.48.0",
+    "eslint-config-next": "14.0.0",
+    "jest": "^29.7.0",
+    "postcss": "^8.4.35",
+    "prettier": "^3.0.0",
+    "tailwindcss": "^4.0.0",
+    "ts-jest": "^29.1.0",
+    "typescript": "5.6.2"
+  }
+}
+EOF
+
+# web/README.md
+cat > web/README.md <<'EOF'
+# Nexara — Web (frontend)
+
+This folder contains the Next.js + TypeScript frontend scaffold for Nexara.
+
+Quickstart
+1. Install (requires Node 18+ and pnpm)
+   pnpm install
+
+2. Dev server
+   pnpm dev
+
+3. Storybook
+   pnpm storybook
+
+4. Build
+   pnpm build
+   pnpm start
+
+Notes
+- The ChatWidget demo on the homepage talks to `/api/mock-stream`, a simple mock SSE route implemented for local development.
+- Tailwind is configured; edit tokens in `tailwind.config.js`.
+EOF
+
+# web/tsconfig.json
+cat > web/tsconfig.json <<'EOF'
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["dom", "dom.iterable", "es2022"],
+    "allowJs": false,
+    "skipLibCheck": true,
+    "strict": true,
+    "forceConsistentCasingInFileNames": true,
+    "noEmit": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "react-jsx",
+    "incremental": true,
+    "types": ["node"]
+  },
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx"],
+  "exclude": ["node_modules"]
+}
+EOF
+
+# web/next.config.js
+cat > web/next.config.js <<'EOF'
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  reactStrictMode: true,
+  experimental: {
+    appDir: true
+  }
+};
+
+module.exports = nextConfig;
+EOF
+
+# web/app/layout.tsx
+mkdir -p web/app
+cat > web/app/layout.tsx <<'EOF'
+import './globals.css';
+import React from 'react';
+
+export const metadata = {
+  title: 'Nexara — Demo',
+  description: 'Nexara frontend demo'
+};
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="en">
+      <body className="bg-slate-50 text-slate-900">
+        <div className="min-h-screen flex flex-col">{children}</div>
+      </body>
+    </html>
+  );
+}
+EOF
+
+# web/app/page.tsx
+cat > web/app/page.tsx <<'EOF'
+import React from "react";
+import dynamic from "next/dynamic";
+
+const ChatWidget = dynamic(() => import("../components/ChatWidget").then(m => m.ChatWidget), { ssr: false });
+
+export default function Page() {
+  return (
+    <main className="max-w-4xl mx-auto p-6">
+      <h1 className="text-3xl font-semibold mb-4">Nexara — ChatWidget demo</h1>
+      <p className="mb-6 text-sm text-slate-600">This demo uses a local mock SSE endpoint <code>/api/mock-stream</code>.</p>
+      <div className="border rounded-lg p-4 bg-white shadow">
+        <ChatWidget conversationId="demo" />
+      </div>
+    </main>
+  );
+}
+EOF
+
+# web/components/ChatWidget.tsx
+cat > web/components/ChatWidget.tsx <<'EOF'
+'use client';
+import React, { useEffect, useRef, useState } from 'react';
+
+type Message = {
+  id: string;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  streaming?: boolean;
+};
+
+export function ChatWidget({ conversationId }: { conversationId: string }) {
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState('');
+  const [isSending, setIsSending] = useState(false);
+  const controllerRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    setMessages([
+      { id: 'sys-1', role: 'system', content: 'Welcome to Nexara. Ask a question to get started.' },
+    ]);
+  }, [conversationId]);
+
+  async function handleSend(e?: React.FormEvent) {
+    e?.preventDefault();
+    if (!input.trim()) return;
+    const text = input.trim();
+    const userMsg: Message = { id: Date.now().toString(), role: 'user', content: text };
+    setMessages((m) => [...m, userMsg]);
+    setInput('');
+    setIsSending(true);
+
+    // create optimistic assistant message that will be filled by streaming
+    const assistantId = Date.now().toString() + '-a';
+    setMessages((m) => [...m, { id: assistantId, role: 'assistant', content: '', streaming: true }]);
+
+    controllerRef.current = new AbortController();
+
+    try {
+      const res = await fetch('/api/mock-stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: text }),
+        signal: controllerRef.current.signal,
+      });
+      if (!res.body) throw new Error('No stream available');
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let done = false;
+      while (!done) {
+        const { value, done: rDone } = await reader.read();
+        done = rDone;
+        if (value) {
+          const chunk = decoder.decode(value);
+          // append chunk to last assistant message
+          setMessages((m) => {
+            const last = m[m.length - 1];
+            if (last && last.streaming && last.role === 'assistant') {
+              return [...m.slice(0, -1), { ...last, content: last.content + chunk }];
+            }
+            return m;
+          });
+        }
+      }
+      // finalize assistant message
+      setMessages((m) => {
+        const last = m[m.length - 1];
+        if (last && last.streaming) return [...m.slice(0, -1), { ...last, streaming: false }];
+        return m;
+      });
+    } catch (err) {
+      console.error('stream error', err);
+      setMessages((m) => [...m, { id: 'err-' + Date.now(), role: 'system', content: 'Error receiving response' }]);
+    } finally {
+      setIsSending(false);
+      controllerRef.current = null;
+    }
+  }
+
+  return (
+    <div className="flex flex-col h-[480px]">
+      <div className="flex-1 overflow-auto p-4 space-y-3" role="log" aria-live="polite">
+        {messages.map((m) => (
+          <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+            <div className={`max-w-[70%] p-3 rounded-lg ${m.role === 'user' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-900'}`}>
+              <div className="whitespace-pre-wrap">{m.content}</div>
+              {m.streaming ? <div className="mt-1 text-xs text-slate-500">• streaming…</div> : null}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <form onSubmit={handleSend} className="p-4 border-t bg-white flex gap-3">
+        <input
+          aria-label="Message"
+          className="flex-1 border rounded px-3 py-2"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder="Ask Nexara..."
+          disabled={isSending}
+        />
+        <button
+          type="submit"
+          disabled={isSending || !input.trim()}
+          className="bg-blue-600 text-white px-4 py-2 rounded disabled:opacity-60"
+        >
+          {isSending ? 'Sending…' : 'Send'}
+        </button>
+      </form>
+    </div>
+  );
+}
+
+export default ChatWidget;
+EOF
+
+# web/app/api/mock-stream/route.ts
+cat > web/app/api/mock-stream/route.ts <<'EOF'
+import { NextResponse } from 'next/server';
+
+export async function POST(req: Request) {
+  const { prompt } = await req.json().catch(() => ({ prompt: 'hello' }));
+
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    start(controller) {
+      const chunks = [
+        `Thinking about: ${prompt}\n\n`,
+        'Analyzing context…\n\n',
+        `Here is a short answer for: "${prompt}"\n\n`,
+      ];
+      let i = 0;
+      const iv = setInterval(() => {
+        if (i >= chunks.length) {
+          clearInterval(iv);
+          controller.close();
+          return;
+        }
+        controller.enqueue(encoder.encode(chunks[i]));
+        i++;
+      }, 400);
+    },
+    cancel() {
+      // handle cancellation if needed
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/plain; charset=utf-8',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+    },
+  });
+}
+EOF
+
+# web/styles/globals.css
+cat > web/styles/globals.css <<'EOF'
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* basic token examples */
+:root{
+  --nexara-primary: #0F62FE;
+  --nexara-accent: #00BFA6;
+  --nexara-neutral-900: #0f172a;
+}
+
+/* small helpers */
+html,body,#__next{height:100%}
+EOF
+
+# web/tailwind.config.js
+cat > web/tailwind.config.js <<'EOF'
+/** @type {import('tailwindcss').Config} */
+module.exports = {
+  content: [
+    "./app/**/*.{ts,tsx,js,jsx}",
+    "./components/**/*.{ts,tsx,js,jsx}",
+    "./stories/**/*.{ts,tsx,js,jsx}"
+  ],
+  theme: {
+    extend: {
+      colors: {
+        nexara: {
+          500: '#0F62FE',
+          400: '#3B82F6',
+          600: '#0B4ED3'
+        }
+      }
+    }
+  },
+  plugins: []
+};
+EOF
+
+# web/postcss.config.js
+cat > web/postcss.config.js <<'EOF'
+module.exports = {
+  plugins: {
+    tailwindcss: {},
+    autoprefixer: {},
+  },
+};
+EOF
+
+# web/.eslintrc.json
+cat > web/.eslintrc.json <<'EOF'
+{
+  "env": { "browser": true, "es2021": true, "node": true },
+  "extends": ["eslint:recommended", "plugin:react/recommended", "plugin:@typescript-eslint/recommended", "next/core-web-vitals"],
+  "parser": "@typescript-eslint/parser",
+  "plugins": ["react", "@typescript-eslint"],
+  "rules": {}
+}
+EOF
+
+# web/.prettierrc
+cat > web/.prettierrc <<'EOF'
+{
+  "singleQuote": true,
+  "trailingComma": "all",
+  "printWidth": 100
+}
+EOF
+
+# web/.storybook/main.ts
+cat > web/.storybook/main.ts <<'EOF'
+import type { StorybookConfig } from '@storybook/react/types';
+const config: StorybookConfig = {
+  stories: ['../stories/**/*.stories.@(tsx|mdx)'],
+  addons: ['@storybook/addon-essentials'],
+  framework: {
+    name: '@storybook/react',
+    options: {}
+  },
+};
+module.exports = config;
+EOF
+
+# web/.storybook/preview.tsx
+cat > web/.storybook/preview.tsx <<'EOF'
+import React from 'react';
+import '../styles/globals.css';
+
+export const parameters = {
+  actions: { argTypesRegex: "^on[A-Z].*" },
+};
+export const decorators = [
+  (Story: any) => (
+    <div style={{ padding: 20, maxWidth: 800 }}>
+      <Story />
+    </div>
+  )
+];
+EOF
+
+# web/stories/ChatWidget.stories.tsx
+cat > web/stories/ChatWidget.stories.tsx <<'EOF'
+import React from 'react';
+import { ChatWidget } from '../components/ChatWidget';
+
+export default {
+  title: 'Components/ChatWidget',
+  component: ChatWidget,
+};
+
+export const Demo = () => <ChatWidget conversationId="storybook" />;
+EOF
+
+# web/jest.config.js
+cat > web/jest.config.js <<'EOF'
+module.exports = {
+  testEnvironment: 'jsdom',
+  transform: {
+    '^.+\\.(ts|tsx)$': 'ts-jest'
+  },
+  moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json'],
+};
+EOF
+
+# .github/workflows/frontend-ci.yml
+cat > .github/workflows/frontend-ci.yml <<'EOF'
+name: Frontend CI
+
+on:
+  push:
+    branches: [ main, feature/initial-scaffold ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./web
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          cache: 'pnpm'
+      - name: Install pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@8.9.0 --activate
+      - name: Install deps
+        run: pnpm install
+      - name: Typecheck
+        run: pnpm build --dry-run || true
+      - name: Lint
+        run: pnpm lint || true
+      - name: Run tests
+        run: pnpm test || true
+      - name: Build Storybook
+        run: pnpm build-storybook || true
+EOF
+
+# Root README.md (replace)
+cat > README.md <<'EOF'
+# nexara
+
+Nexara — Intelligent, composable AI interfaces for teams and customers.
+
+Overview
+Nexara is a platform for building enterprise-grade AI interfaces: conversational agents, prompt playgrounds, model management, and observability — with a focus on security, control, and extensibility.
+
+Key Features
+- Conversational UI with streaming LLM responses
+- Prompt & template management
+- Model registry and metrics
+- RBAC and SSO support
+- Analytics, cost monitoring, and audit logs
+- Integrations (webhooks, Slack, REST API)
+
+Getting started (developer)
+1. Clone the repo:
+   git clone https://github.com/nexaratech0-dev/nexara.git
+2. Frontend:
+   - Recommended: Node 18+, pnpm
+   - cd web && pnpm install && pnpm dev
+3. Backend:
+   - cd api && pnpm install && pnpm dev
+4. Configure environment:
+   - Copy `.env.example` to `.env` and fill in provider keys, DB connection, and SSO settings.
+5. Run migrations and seed data (if included).
+
+Design & Development
+- UI: React + TypeScript, Storybook for components
+- Backend: Node.js (NestJS recommended), PostgreSQL, Redis
+- Model adapters to integrate with OpenAI / Anthropic / Azure OpenAI or local models
+
+Contributing
+- Follow the code style in `.editorconfig` and `eslint` rules
+- Add Storybook stories for new components
+- Open a PR with clear description, screenshots, and test coverage where applicable
+
+License
+TBD — add a license file (e.g., MIT) to the repo.
+
+Contact
+For design files, questions, or to request Figma/Storybook artifacts, open an issue or contact the maintainers.
+EOF
+
+# Stage and commit
+git add -A
+git commit -m "chore(scaffold): add frontend scaffold (Next.js, Tailwind, Storybook)"
+echo "Pushing branch ${BRANCH} to origin..."
+git push -u origin "${BRANCH}"
+
+echo
+echo "Done. Files have been written and pushed to branch: ${BRANCH}"
+echo "Next steps:"
+echo "  - Open a Pull Request on GitHub from ${BRANCH} -> main"
+echo "  - Or use the GitHub CLI: gh pr create --base main --head ${BRANCH} --title \"chore(scaffold): add frontend scaffold\" --body \"Adds Next.js frontend scaffold, Storybook, ChatWidget demo, and CI workflow.\""
+echo
+echo "If push failed due to permissions, ensure you have write access or run this script locally from a clone where you can push."
